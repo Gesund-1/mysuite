@@ -25,4 +25,13 @@ class Database(ctx: Context) : SQLiteOpenHelper(ctx, "MySuite.db", null, 1) {
         writableDatabase.insertWithOnConflict("plugin_data",null,cv,SQLiteDatabase.CONFLICT_REPLACE)
     }
     @Synchronized fun get(plugin: String, key: String): String? = readableDatabase.rawQuery("SELECT json_value FROM plugin_data WHERE plugin_id=? AND data_key=?", arrayOf(plugin,key)).use { if(it.moveToFirst()) it.getString(0) else null }
+
+    @Synchronized fun removePlugin(plugin: String) {
+        writableDatabase.beginTransaction()
+        try {
+            writableDatabase.delete("plugin_data", "plugin_id=?", arrayOf(plugin))
+            writableDatabase.delete("plugins", "id=?", arrayOf(plugin))
+            writableDatabase.setTransactionSuccessful()
+        } finally { writableDatabase.endTransaction() }
+    }
 }

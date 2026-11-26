@@ -22,6 +22,7 @@ class MainActivity : Activity() {
     private lateinit var db: Database
     private lateinit var pm: PluginManager
     private var expectedPluginId: String? = null
+    private var moduleOpen: Boolean = false
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private val audioPrefs by lazy { getSharedPreferences("mysuite_audio", MODE_PRIVATE) }
 
@@ -35,6 +36,7 @@ class MainActivity : Activity() {
         web.settings.domStorageEnabled = true
         web.settings.allowFileAccess = true
         web.settings.allowContentAccess = true
+        web.settings.mediaPlaybackRequiresUserGesture = false
         web.webChromeClient = object : WebChromeClient() {
             override fun onShowFileChooser(
                 view: WebView?,
@@ -52,12 +54,48 @@ class MainActivity : Activity() {
                 catch (e: Exception) { fileChooserCallback = null; callback?.onReceiveValue(null); false }
             }
         }
-        web.webViewClient = WebViewClient()
+        web.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                if (moduleOpen && url != null && url.startsWith("file:")) injectModuleNavigation()
+            }
+        }
         web.addJavascriptInterface(Bridge(), "MySuite")
         showHome()
     }
 
-    private fun showHome() = web.loadUrl("file:///android_asset/www/index.html")
+    private fun showHome() {
+        moduleOpen = false
+        web.loadUrl("file:///android_asset/www/index.html")
+    }
+
+    private fun injectModuleNavigation() {
+        val script = """
+            (function() {
+              if (document.getElementById('mysuite-module-nav')) return;
+              const style = document.createElement('style');
+              style.id = 'mysuite-module-nav-style';
+              style.textContent = `
+                #mysuite-module-nav{position:fixed;top:0;left:0;right:0;z-index:2147483000;display:flex;align-items:center;gap:10px;
+                  min-height:52px;padding:8px 14px;background:#0a1830;color:#f3f7ff;border-bottom:1px solid #29415f;
+                  font:600 14px system-ui,-apple-system,sans-serif;box-shadow:0 3px 14px rgba(0,0,0,.22)}
+                #mysuite-module-nav button{border:0;border-radius:9px;padding:9px 13px;background:#19b9c5;color:#061923;
+                  font-weight:750;font-size:13px}
+                #mysuite-module-nav .label{opacity:.9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+                body{padding-top:58px!important;scroll-padding-top:58px}
+              `;
+              document.head.appendChild(style);
+              const bar=document.createElement('div');
+              bar.id='mysuite-module-nav';
+              bar.innerHTML='<button type="button" id="mysuite-home-btn">⌂ Home</button><span class="label">MySuite</span>';
+              document.body.insertBefore(bar,document.body.firstChild);
+              document.getElementById('mysuite-home-btn').addEventListener('click',function(){
+                if(window.MySuite && MySuite.goHome) MySuite.goHome();
+              });
+            })();
+        """.trimIndent()
+        web.evaluateJavascript(script, null)
+    }
     private fun choosePluginZip(expectedId: String? = null) {
         expectedPluginId = expectedId
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -119,7 +157,7 @@ class MainActivity : Activity() {
             runOnUiThread {
                 val file = pm.pluginFile(id)
                 if (file == null) Toast.makeText(this@MainActivity, "Plugin tidak ditemukan", Toast.LENGTH_SHORT).show()
-                else web.loadUrl(Uri.fromFile(file).toString())
+                else { moduleOpen = true; web.loadUrl(Uri.fromFile(file).toString()) }
             }
         }
         @JavascriptInterface fun getData(plugin: String, key: String): String = db.get(plugin, key) ?: "null"
@@ -152,7 +190,7 @@ class MainActivity : Activity() {
         root.listFiles().forEach { item ->
             val name = item.name ?: return@forEach
             if (item.isDirectory && !name.startsWith(".")) walk(item, name, name)
-            else if (item.isFile && name.substringAfterLast('.', "").lowercase() == "mp3") {
+            else if (item.isFile && name.substringAfterLast('.', "").lowercase() in setOf("mp3", "m4a", "ogg", "wav", "flac", "aac")) {
                 tracks.put(JSONObject().put("judul", name.substringBeforeLast('.', name)).put("file", name)
                     .put("url", item.uri.toString()).put("playlist", "all"))
             }
@@ -205,6 +243,10 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Android API")
     override fun onBackPressed() {
-        if (web.url?.contains("/plugins/") == true) showHome() else super.onBackPressed()
+        if (moduleOpen) {
+            showHome()
+        } else {
+            super.onBackPressed()
+        }
     }
 }

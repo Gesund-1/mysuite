@@ -52,7 +52,7 @@ class MainActivity : Activity() {
         val backButton = Button(this).apply {
             text = "‹  Kembali ke Vault"
             isAllCaps = false
-            setOnClickListener { returnToPlugin() }
+            setOnClickListener { if (viewingExternalPage) returnToPlugin() else showHome() }
         }
         externalTitle = TextView(this).apply {
             setTextColor(Color.WHITE)
@@ -105,7 +105,9 @@ class MainActivity : Activity() {
     private fun returnToPlugin() {
         val target = pluginReturnUrl
         viewingExternalPage = false
-        externalBar.visibility = View.GONE
+        externalBar.visibility = if (target != null) View.VISIBLE else View.GONE
+        (externalBar.getChildAt(0) as? Button)?.text = "‹  Kembali ke MySuite"
+        externalTitle.text = "Module aktif"
         web.settings.allowFileAccess = true
         web.settings.allowContentAccess = true
         web.addJavascriptInterface(Bridge(), "MySuite")
@@ -177,7 +179,9 @@ class MainActivity : Activity() {
                 else {
                     pluginReturnUrl = Uri.fromFile(file).toString()
                     viewingExternalPage = false
-                    externalBar.visibility = View.GONE
+                    externalBar.visibility = View.VISIBLE
+                    (externalBar.getChildAt(0) as? Button)?.text = "‹  Kembali ke MySuite"
+                    externalTitle.text = "Module aktif"
                     web.settings.allowFileAccess = true
                     web.settings.allowContentAccess = true
                     web.addJavascriptInterface(Bridge(), "MySuite")
@@ -195,6 +199,7 @@ class MainActivity : Activity() {
                 if (pluginReturnUrl == null && web.url?.startsWith("file:") == true) pluginReturnUrl = web.url
                 viewingExternalPage = true
                 externalTitle.text = title.ifBlank { uri.host ?: "Website" }
+                (externalBar.getChildAt(0) as? Button)?.text = "‹  Kembali ke Vault"
                 externalBar.visibility = View.VISIBLE
                 // Halaman eksternal tidak diberi akses JavaScript bridge MySuite.
                 web.removeJavascriptInterface("MySuite")

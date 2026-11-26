@@ -16,13 +16,23 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.ValueCallback
 import android.widget.Toast
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Button
+import android.view.View
+import android.view.Gravity
+import android.graphics.Color
+import android.graphics.Typeface
 
 class MainActivity : Activity() {
     private lateinit var web: WebView
+    private lateinit var externalBar: LinearLayout
+    private lateinit var externalTitle: TextView
+    private var pluginReturnUrl: String? = null
+    private var viewingExternalPage = false
     private lateinit var db: Database
     private lateinit var pm: PluginManager
     private var expectedPluginId: String? = null
-    private var moduleOpen: Boolean = false
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private val audioPrefs by lazy { getSharedPreferences("mysuite_audio", MODE_PRIVATE) }
 
@@ -31,12 +41,35 @@ class MainActivity : Activity() {
         db = Database(this)
         pm = PluginManager(this, db)
         web = WebView(this)
-        setContentView(web)
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(11, 18, 34)) }
+        externalBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(12, 8, 12, 8)
+            setBackgroundColor(Color.rgb(8, 24, 52))
+            visibility = View.GONE
+        }
+        val backButton = Button(this).apply {
+            text = "‹  Kembali ke Vault"
+            isAllCaps = false
+            setOnClickListener { returnToPlugin() }
+        }
+        externalTitle = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1
+            setPadding(12, 0, 4, 0)
+        }
+        externalBar.addView(backButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        externalBar.addView(externalTitle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(externalBar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        root.addView(web, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        setContentView(root)
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.settings.allowFileAccess = true
         web.settings.allowContentAccess = true
-        web.settings.mediaPlaybackRequiresUserGesture = false
         web.webChromeClient = object : WebChromeClient() {
             override fun onShowFileChooser(
                 view: WebView?,
@@ -54,47 +87,29 @@ class MainActivity : Activity() {
                 catch (e: Exception) { fileChooserCallback = null; callback?.onReceiveValue(null); false }
             }
         }
-        web.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                if (moduleOpen && url != null && url.startsWith("file:")) injectModuleNavigation()
-            }
-        }
+        web.webViewClient = WebViewClient()
         web.addJavascriptInterface(Bridge(), "MySuite")
         showHome()
     }
 
     private fun showHome() {
-        moduleOpen = false
+        viewingExternalPage = false
+        pluginReturnUrl = null
+        externalBar.visibility = View.GONE
+        web.settings.allowFileAccess = true
+        web.settings.allowContentAccess = true
+        web.addJavascriptInterface(Bridge(), "MySuite")
         web.loadUrl("file:///android_asset/www/index.html")
     }
 
-    private fun injectModuleNavigation() {
-        val script = """
-            (function() {
-              if (document.getElementById('mysuite-module-nav')) return;
-              const style = document.createElement('style');
-              style.id = 'mysuite-module-nav-style';
-              style.textContent = `
-                #mysuite-module-nav{position:fixed;top:0;left:0;right:0;z-index:2147483000;display:flex;align-items:center;gap:10px;
-                  min-height:52px;padding:8px 14px;background:#0a1830;color:#f3f7ff;border-bottom:1px solid #29415f;
-                  font:600 14px system-ui,-apple-system,sans-serif;box-shadow:0 3px 14px rgba(0,0,0,.22)}
-                #mysuite-module-nav button{border:0;border-radius:9px;padding:9px 13px;background:#19b9c5;color:#061923;
-                  font-weight:750;font-size:13px}
-                #mysuite-module-nav .label{opacity:.9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-                body{padding-top:58px!important;scroll-padding-top:58px}
-              `;
-              document.head.appendChild(style);
-              const bar=document.createElement('div');
-              bar.id='mysuite-module-nav';
-              bar.innerHTML='<button type="button" id="mysuite-home-btn">⌂ Home</button><span class="label">MySuite</span>';
-              document.body.insertBefore(bar,document.body.firstChild);
-              document.getElementById('mysuite-home-btn').addEventListener('click',function(){
-                if(window.MySuite && MySuite.goHome) MySuite.goHome();
-              });
-            })();
-        """.trimIndent()
-        web.evaluateJavascript(script, null)
+    private fun returnToPlugin() {
+        val target = pluginReturnUrl
+        viewingExternalPage = false
+        externalBar.visibility = View.GONE
+        web.settings.allowFileAccess = true
+        web.settings.allowContentAccess = true
+        web.addJavascriptInterface(Bridge(), "MySuite")
+        if (target != null) web.loadUrl(target) else showHome()
     }
     private fun choosePluginZip(expectedId: String? = null) {
         expectedPluginId = expectedId
@@ -110,7 +125,9 @@ class MainActivity : Activity() {
         @JavascriptInterface fun importPlugin() { runOnUiThread { choosePluginZip() } }
         @JavascriptInterface fun pickAudioFolder() {
             runOnUiThread {
-                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                }
                 startActivityForResult(intent, 43)
             }
         }
@@ -157,7 +174,33 @@ class MainActivity : Activity() {
             runOnUiThread {
                 val file = pm.pluginFile(id)
                 if (file == null) Toast.makeText(this@MainActivity, "Plugin tidak ditemukan", Toast.LENGTH_SHORT).show()
-                else { moduleOpen = true; web.loadUrl(Uri.fromFile(file).toString()) }
+                else {
+                    pluginReturnUrl = Uri.fromFile(file).toString()
+                    viewingExternalPage = false
+                    externalBar.visibility = View.GONE
+                    web.settings.allowFileAccess = true
+                    web.settings.allowContentAccess = true
+                    web.addJavascriptInterface(Bridge(), "MySuite")
+                    web.loadUrl(pluginReturnUrl!!)
+                }
+            }
+        }
+        @JavascriptInterface fun openBookmarkInApp(rawUrl: String, title: String) {
+            runOnUiThread {
+                val uri = Uri.parse(rawUrl.trim())
+                if (uri.scheme != "https" && uri.scheme != "http") {
+                    Toast.makeText(this@MainActivity, "URL harus HTTP atau HTTPS", Toast.LENGTH_SHORT).show()
+                    return@runOnUiThread
+                }
+                if (pluginReturnUrl == null && web.url?.startsWith("file:") == true) pluginReturnUrl = web.url
+                viewingExternalPage = true
+                externalTitle.text = title.ifBlank { uri.host ?: "Website" }
+                externalBar.visibility = View.VISIBLE
+                // Halaman eksternal tidak diberi akses JavaScript bridge MySuite.
+                web.removeJavascriptInterface("MySuite")
+                web.settings.allowFileAccess = false
+                web.settings.allowContentAccess = false
+                web.loadUrl(uri.toString())
             }
         }
         @JavascriptInterface fun getData(plugin: String, key: String): String = db.get(plugin, key) ?: "null"
@@ -190,7 +233,7 @@ class MainActivity : Activity() {
         root.listFiles().forEach { item ->
             val name = item.name ?: return@forEach
             if (item.isDirectory && !name.startsWith(".")) walk(item, name, name)
-            else if (item.isFile && name.substringAfterLast('.', "").lowercase() in setOf("mp3", "m4a", "ogg", "wav", "flac", "aac")) {
+            else if (item.isFile && name.substringAfterLast('.', "").lowercase() == "mp3") {
                 tracks.put(JSONObject().put("judul", name.substringBeforeLast('.', name)).put("file", name)
                     .put("url", item.uri.toString()).put("playlist", "all"))
             }
@@ -205,7 +248,8 @@ class MainActivity : Activity() {
             if (resultCode == Activity.RESULT_OK && data?.data != null) {
                 val uri = data.data!!
                 val flags = data.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                try { contentResolver.takePersistableUriPermission(uri, flags) } catch (_: Exception) { }
+                val readFlags = flags or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                try { contentResolver.takePersistableUriPermission(uri, readFlags) } catch (_: Exception) { }
                 audioPrefs.edit().putString("tree_uri", uri.toString()).apply()
                 val payload = JSONObject.quote(readAudioLibrary().toString())
                 web.evaluateJavascript("window.MySuiteAudioLibraryLoaded && window.MySuiteAudioLibraryLoaded($payload)", null)
@@ -243,10 +287,8 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Android API")
     override fun onBackPressed() {
-        if (moduleOpen) {
-            showHome()
-        } else {
-            super.onBackPressed()
-        }
+        if (viewingExternalPage) returnToPlugin()
+        else if (web.url?.contains("/plugins/") == true || pluginReturnUrl != null) showHome()
+        else super.onBackPressed()
     }
 }

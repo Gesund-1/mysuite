@@ -3,10 +3,14 @@
 ## Pembaruan aplikasi
 
 ### v1.1.2
-- Menambahkan navigasi kembali ke module dari halaman website eksternal.
+- Navbar native penuh pada beranda, setiap module, dan halaman eksternal; tombol Home kembali langsung ke beranda.
+- Navbar halaman eksternal Vault menyediakan tombol kembali langsung ke Vault.
 - Menjaga toolbar MySuite tetap terlihat saat membuka halaman web dari dalam aplikasi.
-- Memperbaiki pengelolaan izin akses folder audio Android.
-- Memperbarui konfigurasi aplikasi untuk kompatibilitas WebView Android.
+- Menambahkan indikator loading dan menonaktifkan zoom WebView agar tata letak tetap stabil.
+- Memperbaiki pemilihan folder audio serta deklarasi izin audio dan akses penyimpanan untuk pengembangan File Manager.
+- Menyediakan penyimpanan ekspor XLS Finance langsung ke folder Download.
+- Mencegah tombol Back Android menutup aplikasi secara tidak sengaja dari beranda.
+- Merapikan teks beranda dan memperbarui footer aplikasi.
 
 ## Build APK
 

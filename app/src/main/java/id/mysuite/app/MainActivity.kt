@@ -18,6 +18,15 @@ import android.webkit.ValueCallback
 import android.widget.Toast
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.ImageView
+import android.widget.ProgressBar
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.content.ContentValues
+import android.content.pm.PackageManager
+import android.util.Base64
+import android.provider.Settings
 import android.widget.Button
 import android.view.View
 import android.view.Gravity
@@ -28,6 +37,8 @@ class MainActivity : Activity() {
     private lateinit var web: WebView
     private lateinit var externalBar: LinearLayout
     private lateinit var externalTitle: TextView
+    private lateinit var loadingBar: ProgressBar
+    private var currentModuleTitle = "MySuite"
     private var pluginReturnUrl: String? = null
     private var viewingExternalPage = false
     private lateinit var db: Database
@@ -50,8 +61,10 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
         val backButton = Button(this).apply {
-            text = "‹  Kembali ke Vault"
+            text = "⌂  Home"
             isAllCaps = false
+            setTextColor(Color.WHITE)
+            setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(31, 91, 145)))
             setOnClickListener { if (viewingExternalPage) returnToPlugin() else showHome() }
         }
         externalTitle = TextView(this).apply {
@@ -63,14 +76,36 @@ class MainActivity : Activity() {
         }
         externalBar.addView(backButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         externalBar.addView(externalTitle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val logo = ImageView(this).apply {
+            setImageResource(R.drawable.mysuite_logo)
+            contentDescription = "Logo MySuite"
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(4, 2, 4, 2)
+        }
+        externalBar.addView(logo, LinearLayout.LayoutParams(38, 38))
+        externalBar.visibility = View.VISIBLE
         root.addView(externalBar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        loadingBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = false
+            max = 100
+            progress = 0
+            visibility = View.GONE
+        }
+        root.addView(loadingBar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 3))
         root.addView(web, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.settings.allowFileAccess = true
         web.settings.allowContentAccess = true
+        web.settings.setSupportZoom(false)
+        web.settings.builtInZoomControls = false
+        web.settings.displayZoomControls = false
         web.webChromeClient = object : WebChromeClient() {
+            override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                loadingBar.progress = newProgress.coerceIn(0, 100)
+                loadingBar.visibility = if (newProgress >= 100) View.GONE else View.VISIBLE
+            }
             override fun onShowFileChooser(
                 view: WebView?,
                 callback: ValueCallback<Array<Uri>>?,
@@ -78,16 +113,36 @@ class MainActivity : Activity() {
             ): Boolean {
                 fileChooserCallback?.onReceiveValue(null)
                 fileChooserCallback = callback
+                val accepted = params?.acceptTypes.orEmpty().map { it.trim() }.filter { it.isNotBlank() }
+                val mimeTypes = accepted.filter { it.contains('/') && !it.contains('*') }.distinct().toTypedArray()
+                val wantsAudio = accepted.any { it.startsWith("audio/") } || accepted.isEmpty()
                 val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "audio/*"
-                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                    type = when {
+                        accepted.any { it == "*/*" } -> "*/*"
+                        accepted.any { it.endsWith("/*") } -> accepted.first { it.endsWith("/*") }
+                        mimeTypes.size == 1 -> mimeTypes[0]
+                        mimeTypes.isNotEmpty() -> "*/*"
+                        accepted.any { it.contains(".xls") } -> "application/vnd.ms-excel"
+                        else -> "*/*"
+                    }
+                    if (mimeTypes.isNotEmpty() && type == "*/*") putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes)
+                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, wantsAudio)
                 }
                 return try { startActivityForResult(intent, 42); true }
                 catch (e: Exception) { fileChooserCallback = null; callback?.onReceiveValue(null); false }
             }
         }
-        web.webViewClient = WebViewClient()
+        web.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                loadingBar.progress = 0
+                loadingBar.visibility = View.VISIBLE
+            }
+            override fun onPageFinished(view: WebView?, url: String?) {
+                loadingBar.progress = 100
+                loadingBar.visibility = View.GONE
+            }
+        }
         web.addJavascriptInterface(Bridge(), "MySuite")
         showHome()
     }
@@ -95,7 +150,10 @@ class MainActivity : Activity() {
     private fun showHome() {
         viewingExternalPage = false
         pluginReturnUrl = null
-        externalBar.visibility = View.GONE
+        externalBar.visibility = View.VISIBLE
+        currentModuleTitle = "MySuite"
+        externalTitle.text = currentModuleTitle
+        (externalBar.getChildAt(0) as? Button)?.text = "⌂  Home"
         web.settings.allowFileAccess = true
         web.settings.allowContentAccess = true
         web.addJavascriptInterface(Bridge(), "MySuite")
@@ -105,9 +163,9 @@ class MainActivity : Activity() {
     private fun returnToPlugin() {
         val target = pluginReturnUrl
         viewingExternalPage = false
-        externalBar.visibility = if (target != null) View.VISIBLE else View.GONE
-        (externalBar.getChildAt(0) as? Button)?.text = "‹  Kembali ke MySuite"
-        externalTitle.text = "Module aktif"
+        externalBar.visibility = View.VISIBLE
+        (externalBar.getChildAt(0) as? Button)?.text = "⌂  Home"
+        externalTitle.text = currentModuleTitle
         web.settings.allowFileAccess = true
         web.settings.allowContentAccess = true
         web.addJavascriptInterface(Bridge(), "MySuite")
@@ -127,6 +185,7 @@ class MainActivity : Activity() {
         @JavascriptInterface fun importPlugin() { runOnUiThread { choosePluginZip() } }
         @JavascriptInterface fun pickAudioFolder() {
             runOnUiThread {
+                requestAudioPermissionIfNeeded()
                 val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
                 }
@@ -180,8 +239,9 @@ class MainActivity : Activity() {
                     pluginReturnUrl = Uri.fromFile(file).toString()
                     viewingExternalPage = false
                     externalBar.visibility = View.VISIBLE
-                    (externalBar.getChildAt(0) as? Button)?.text = "‹  Kembali ke MySuite"
-                    externalTitle.text = "Module aktif"
+                    currentModuleTitle = when (id.lowercase()) { "music" -> "Music"; "finance" -> "Finance"; "vault" -> "MyVault"; else -> id }
+                    externalTitle.text = currentModuleTitle
+                    (externalBar.getChildAt(0) as? Button)?.text = "⌂  Home"
                     web.settings.allowFileAccess = true
                     web.settings.allowContentAccess = true
                     web.addJavascriptInterface(Bridge(), "MySuite")
@@ -199,7 +259,7 @@ class MainActivity : Activity() {
                 if (pluginReturnUrl == null && web.url?.startsWith("file:") == true) pluginReturnUrl = web.url
                 viewingExternalPage = true
                 externalTitle.text = title.ifBlank { uri.host ?: "Website" }
-                (externalBar.getChildAt(0) as? Button)?.text = "‹  Kembali ke Vault"
+                (externalBar.getChildAt(0) as? Button)?.text = "‹  Vault"
                 externalBar.visibility = View.VISIBLE
                 // Halaman eksternal tidak diberi akses JavaScript bridge MySuite.
                 web.removeJavascriptInterface("MySuite")
@@ -211,6 +271,67 @@ class MainActivity : Activity() {
         @JavascriptInterface fun getData(plugin: String, key: String): String = db.get(plugin, key) ?: "null"
         @JavascriptInterface fun setData(plugin: String, key: String, value: String) { db.put(plugin, key, value) }
         @JavascriptInterface fun goHome() { runOnUiThread { showHome() } }
+        @JavascriptInterface fun requestAllFilesAccess() {
+            runOnUiThread {
+                try {
+                    if (Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
+                        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            Uri.parse("package:$packageName"))
+                        startActivity(intent)
+                    } else requestAudioPermissionIfNeeded()
+                } catch (e: Exception) {
+                    Toast.makeText(this@MainActivity, "Pengaturan penyimpanan tidak tersedia: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        @JavascriptInterface fun saveFinanceXls(encoded: String): Boolean {
+            return try {
+                val bytes = Base64.decode(encoded, Base64.DEFAULT)
+                require(bytes.size <= 10 * 1024 * 1024) { "File ekspor terlalu besar" }
+                if (Build.VERSION.SDK_INT < 29 && Build.VERSION.SDK_INT >= 23 &&
+                    checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                    runOnUiThread {
+                        requestPermissions(arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE), 51)
+                        Toast.makeText(this@MainActivity, "Izinkan akses penyimpanan, lalu tekan Ekspor XLS sekali lagi", Toast.LENGTH_LONG).show()
+                    }
+                    return false
+                }
+                val name = "keuangan-mysuite.xls"
+                if (Build.VERSION.SDK_INT >= 29) {
+                    val values = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                        put(MediaStore.MediaColumns.MIME_TYPE, "application/vnd.ms-excel")
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                        put(MediaStore.MediaColumns.IS_PENDING, 1)
+                    }
+                    val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                        ?: error("Tidak dapat membuat file di Download")
+                    try {
+                        contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("Tidak dapat menulis file")
+                        val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                        contentResolver.update(uri, done, null, null)
+                    } catch (e: Exception) { contentResolver.delete(uri, null, null); throw e }
+                } else {
+                    val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                    if (!dir.exists()) dir.mkdirs()
+                    val out = java.io.File(dir, name)
+                    out.writeBytes(bytes)
+                }
+                runOnUiThread { Toast.makeText(this@MainActivity, "File XLS disimpan di Download", Toast.LENGTH_LONG).show() }
+                true
+            } catch (e: Exception) {
+                runOnUiThread { Toast.makeText(this@MainActivity, "Ekspor gagal: ${e.message}", Toast.LENGTH_LONG).show() }
+                false
+            }
+        }
+    }
+
+    private fun requestAudioPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.READ_MEDIA_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.READ_MEDIA_AUDIO), 50)
+        } else if (Build.VERSION.SDK_INT in 23..32 && checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE), 50)
+        }
     }
 
     private fun readAudioLibrary(): JSONObject {
@@ -238,7 +359,7 @@ class MainActivity : Activity() {
         root.listFiles().forEach { item ->
             val name = item.name ?: return@forEach
             if (item.isDirectory && !name.startsWith(".")) walk(item, name, name)
-            else if (item.isFile && name.substringAfterLast('.', "").lowercase() == "mp3") {
+            else if (item.isFile && name.substringAfterLast('.', "").lowercase() in setOf("mp3", "m4a", "ogg", "wav", "flac", "aac")) {
                 tracks.put(JSONObject().put("judul", name.substringBeforeLast('.', name)).put("file", name)
                     .put("url", item.uri.toString()).put("playlist", "all"))
             }
@@ -293,7 +414,10 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated in Android API")
     override fun onBackPressed() {
         if (viewingExternalPage) returnToPlugin()
-        else if (web.url?.contains("/plugins/") == true || pluginReturnUrl != null) showHome()
-        else super.onBackPressed()
+        else if (pluginReturnUrl != null) showHome()
+        else {
+            // Tetap di beranda; Back tidak menutup Activity secara tidak sengaja.
+            Toast.makeText(this, "Anda sudah berada di beranda MySuite", Toast.LENGTH_SHORT).show()
+        }
     }
 }
